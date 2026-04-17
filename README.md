@@ -36,6 +36,452 @@ The three workers compete for the same queues. Tasks are distributed naturally �
 
 ---
 
+## User Guide
+
+### Prerequisites
+
+| Requirement | Minimum version | Check |
+|-------------|----------------|-------|
+| Docker | 24+ | `docker --version` |
+| Docker Compose | v2 (bundled with Docker Desktop) | `docker compose version` |
+| Python _(only for running tests locally)_ | 3.11+ | `python --version` |
+
+---
+
+### 1. Start the system
+
+```bash
+git clone https://github.com/federicomoroz/task-queue
+cd task-queue
+docker compose up --build
+```
+
+Docker Compose starts three containers in dependency order:
+
+```
+redis (health: redis-cli ping)
+  └── api (health: curl /health) → waits for redis to be healthy
+        └── worker              → waits for both redis and api to be healthy
+```
+
+First build takes ~60 seconds (downloads base images and installs dependencies). Subsequent starts are instant.
+
+You will see logs from all three services interleaved in the terminal:
+
+```
+redis-1   | Ready to accept connections
+api-1     | INFO:     Application startup complete.
+worker-1  | Worker started. Listening on queues: ['default', 'high', 'low']
+```
+
+Once you see those three lines, the system is ready. Open **http://localhost:8004**.
+
+---
+
+### 2. Run your first task
+
+**Option A — Browser UI**
+
+1. Open **http://localhost:8004**
+2. Click the **ENQUEUE** tab
+3. Click the **ECHO BURST** scenario button
+4. Click the **DASHBOARD** tab — the stats cards update every 2 seconds
+5. Watch `pending` count drop to 0 as the worker processes each task
+
+**Option B — curl**
+
+```bash
+# Submit a task
+curl -s -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"type": "echo", "queue": "default", "payload": {"msg": "hello"}}' \
+  | python -m json.tool
+```
+
+Response (HTTP 202):
+```json
+{
+  "id": 1,
+  "type": "echo",
+  "queue": "default",
+  "payload": "{\"msg\": \"hello\"}",
+  "status": "pending",
+  "max_retries": 3,
+  "retry_count": 0,
+  "error": null,
+  "created_at": "2024-01-15T10:23:45",
+  "updated_at": "2024-01-15T10:23:45"
+}
+```
+
+```bash
+# Check its status (replace 1 with the returned id)
+curl -s http://localhost:8004/tasks/1 | python -m json.tool
+```
+
+A few seconds later, `status` changes from `"pending"` to `"processing"` to `"completed"`.
+
+---
+
+### 3. Submit tasks via API
+
+#### Echo task
+
+Logs a message to the worker console and sleeps 1 second. Good for observing the lifecycle.
+
+```bash
+curl -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "echo",
+    "queue": "default",
+    "payload": {"msg": "my first task"},
+    "max_retries": 3
+  }'
+```
+
+#### HTTP request task
+
+The worker makes a real outbound HTTP call. Useful for testing webhooks, calling APIs, or triggering downstream services.
+
+```bash
+# GET request
+curl -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "http_request",
+    "queue": "high",
+    "payload": {
+      "method": "GET",
+      "url": "https://httpbin.org/uuid"
+    }
+  }'
+
+# POST request with body
+curl -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "http_request",
+    "queue": "high",
+    "payload": {
+      "method": "POST",
+      "url": "https://httpbin.org/post",
+      "body": {"event": "user.signup", "user_id": 42}
+    }
+  }'
+```
+
+#### Route to a specific queue
+
+```bash
+# High priority — picked up before default and low
+curl -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"type": "echo", "queue": "high", "payload": {"msg": "urgent"}}'
+
+# Low priority — picked up last
+curl -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"type": "echo", "queue": "low", "payload": {"msg": "background"}}'
+```
+
+#### Disable retries (fire-and-forget)
+
+```bash
+curl -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"type": "echo", "queue": "default", "payload": {"msg": "no retry"}, "max_retries": 0}'
+```
+
+If the task fails, it goes straight to `failed` without re-enqueueing.
+
+#### Submit a batch
+
+```bash
+for i in 1 2 3 4 5; do
+  curl -s -X POST http://localhost:8004/tasks \
+    -H "Content-Type: application/json" \
+    -d "{\"type\": \"echo\", \"queue\": \"default\", \"payload\": {\"msg\": \"batch-$i\"}}" &
+done
+wait
+echo "5 tasks submitted"
+```
+
+---
+
+### 4. Query tasks
+
+```bash
+# All tasks (most recent first, limit 100)
+curl -s http://localhost:8004/tasks | python -m json.tool
+
+# Filter by status
+curl -s "http://localhost:8004/tasks?status=pending"
+curl -s "http://localhost:8004/tasks?status=failed"
+curl -s "http://localhost:8004/tasks?status=completed"
+
+# Filter by queue
+curl -s "http://localhost:8004/tasks?queue=high"
+
+# Combine filters
+curl -s "http://localhost:8004/tasks?queue=default&status=retrying"
+
+# Increase limit (max 500)
+curl -s "http://localhost:8004/tasks?limit=500"
+
+# Single task by ID
+curl -s http://localhost:8004/tasks/1
+
+# Queue depths
+curl -s http://localhost:8004/queues
+
+# Health check
+curl -s http://localhost:8004/health
+```
+
+---
+
+### 5. Watch tasks process in real time
+
+**Terminal 1** — keep the stack running:
+```bash
+docker compose up
+```
+
+**Terminal 2** — stream worker logs only:
+```bash
+docker compose logs -f worker
+```
+
+**Terminal 3** — submit tasks and poll status:
+```bash
+# Submit
+ID=$(curl -s -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"type":"echo","queue":"default","payload":{"msg":"watch me"}}' \
+  | python -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+echo "Task ID: $ID"
+
+# Poll until done
+while true; do
+  STATUS=$(curl -s http://localhost:8004/tasks/$ID \
+    | python -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  echo "Status: $STATUS"
+  [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && break
+  sleep 1
+done
+```
+
+---
+
+### 6. Scale workers horizontally
+
+```bash
+# Start with 3 workers
+docker compose up --scale worker=3
+
+# Or scale up while the stack is already running
+docker compose up -d --scale worker=3 --no-recreate
+```
+
+To see all worker instances and which tasks they're handling:
+
+```bash
+docker compose logs -f worker
+```
+
+Each worker line is prefixed with its container name (`task-queue-worker-1`, `-2`, `-3`). You'll see task IDs distributed across different workers.
+
+To scale back down:
+
+```bash
+docker compose up -d --scale worker=1 --no-recreate
+```
+
+---
+
+### 7. Observe a task failure and retry
+
+Submit a task that will fail (non-existent domain):
+
+```bash
+curl -X POST http://localhost:8004/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "http_request",
+    "queue": "default",
+    "payload": {"method": "GET", "url": "https://this-domain-does-not-exist-xyz.com"},
+    "max_retries": 2
+  }'
+```
+
+Watch the worker logs — the task appears three times total (1 original + 2 retries), each attempt logged. After the third failure, `GET /tasks/{id}` returns `status: "failed"` with the `error` field populated.
+
+```bash
+# Check the error message after failure
+curl -s http://localhost:8004/tasks/1 | python -m json.tool
+# "status": "failed"
+# "retry_count": 2
+# "error": "All connection attempts failed"
+```
+
+---
+
+### 8. Run the tests
+
+Tests run without Docker — they use an in-memory SQLite and FakeRedis:
+
+```bash
+pip install -r requirements.txt
+pytest -v
+```
+
+Run a specific module:
+
+```bash
+pytest tests/test_worker.py -v
+pytest tests/test_tasks_api.py -v
+```
+
+Run only the critical path tests:
+
+```bash
+pytest tests/test_pipeline.py tests/test_worker.py tests/test_tasks_api.py -v
+```
+
+---
+
+### 9. Stop and clean up
+
+```bash
+# Stop containers, keep volumes (data persists across restarts)
+docker compose down
+
+# Stop and delete all data (SQLite + Redis)
+docker compose down -v
+
+# Stop and remove images too (forces full rebuild next time)
+docker compose down -v --rmi local
+```
+
+---
+
+### 10. Run without Docker (local development)
+
+Requires a local Redis instance.
+
+```bash
+# Start Redis (if not already running)
+docker run -d -p 6379:6379 redis:7-alpine
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Create the data directory
+mkdir -p data
+
+# Start the API
+DATABASE_URL="sqlite:///./data/tasks.db" \
+REDIS_URL="redis://localhost:6379/0" \
+uvicorn app.main:app --port 8004 --reload
+
+# In a second terminal: start a worker
+DATABASE_URL="sqlite:///./data/tasks.db" \
+REDIS_URL="redis://localhost:6379/0" \
+python -m worker.main
+```
+
+---
+
+### 11. Add a new task type
+
+1. Create `app/models/services/handlers/my_handler.py`:
+
+```python
+from app.models.orm import Task
+from app.models.services.interfaces import TaskHandlerBase
+
+class MyHandler(TaskHandlerBase):
+    def run(self, task: Task) -> None:
+        import json
+        payload = json.loads(task.payload)
+        # your logic here
+        # raise an exception to trigger retry
+```
+
+2. Register it in `worker/main.py`:
+
+```python
+from app.models.services.handlers.my_handler import MyHandler
+
+def build_handler_registry(http_client):
+    return {
+        "echo":         EchoHandler(),
+        "http_request": HttpHandler(http_client),
+        "my_type":      MyHandler(),          # ← add this line
+    }
+```
+
+3. Add the type to the validator in `app/controllers/pipeline.py`:
+
+```python
+KNOWN_TYPES = {"echo", "http_request", "my_type"}   # ← add here
+```
+
+4. Rebuild the worker container:
+
+```bash
+docker compose up --build worker
+```
+
+No other files change. The API, retry logic, event emission, and database persistence work automatically for the new type.
+
+---
+
+### Troubleshooting
+
+**API returns `connection refused` or worker shows Redis errors**
+
+The worker depends on the API health check passing before it starts. If Redis is slow to start, `depends_on` handles the wait automatically. If you see connection errors after startup, check that Redis is healthy:
+
+```bash
+docker compose ps
+docker compose logs redis
+```
+
+**Worker picks up a task but status stays `processing`**
+
+The task is being processed. `echo` tasks sleep 1 second; `http_request` tasks depend on the target URL's response time. Check worker logs:
+
+```bash
+docker compose logs -f worker
+```
+
+**Tasks stuck as `pending` (worker not running)**
+
+```bash
+docker compose ps        # check if worker container is up
+docker compose up worker # restart worker if stopped
+```
+
+**Port 8004 already in use**
+
+```bash
+# Change the host port in docker-compose.yml
+ports:
+  - "8005:8004"   # host:container
+```
+
+**Reset everything and start fresh**
+
+```bash
+docker compose down -v
+docker compose up --build
+```
+
+---
+
 ## What Problem It Solves
 
 Synchronous APIs have a ceiling: every request must complete before the response is returned. When a task takes time — sending an email, calling a slow third-party API, generating a report — the client blocks, timeouts multiply, and the service becomes fragile under load.
