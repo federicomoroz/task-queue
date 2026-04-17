@@ -8,6 +8,16 @@ The project is designed to be read as a portfolio piece: every architectural dec
 
 ## Live Demo
 
+**[https://task-queue-tpdz.onrender.com](https://task-queue-tpdz.onrender.com)**
+
+Open the link, click **ENQUEUE**, pick a scenario, and switch to **DASHBOARD** to watch tasks go from `pending` → `processing` → `completed` in real time.
+
+> The free-tier instance spins down after 15 minutes of inactivity. First load may take ~30 seconds to wake up.
+
+---
+
+### Run locally
+
 ```bash
 git clone https://github.com/federicomoroz/task-queue
 cd task-queue
@@ -930,12 +940,64 @@ All values are read from environment variables (or a `.env` file).
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
-| `DATABASE_URL` | `sqlite:////data/tasks.db` | SQLAlchemy database URL |
+| `DATABASE_URL` | `sqlite:///tasks.db` | SQLAlchemy database URL (relative to working directory) |
 | `WORKER_QUEUES` | `default,high,low` | Comma-separated list of queues workers listen on |
 | `BRPOP_TIMEOUT` | `5` | Seconds a worker blocks waiting for a task |
 | `PURGE_COMPLETED_AFTER_HOURS` | `24` | Completed tasks older than this are deleted by the background scheduler |
 
 In `docker-compose.yml` these are injected directly into each service's `environment` block.
+
+---
+
+## Cloud Deploy
+
+The live demo runs on [Render](https://render.com) free tier using a single-container configuration (`Dockerfile.railway`). The multi-container architecture in `docker-compose.yml` is preserved for local development.
+
+### Single-container differences
+
+| Local (`docker-compose.yml`) | Cloud (`Dockerfile.railway`) |
+|------------------------------|------------------------------|
+| Three separate containers: `redis`, `api`, `worker` | One container: API + worker in the same process |
+| Worker runs as a separate Python process | Worker runs as a daemon thread started in the FastAPI lifespan |
+| Shared SQLite via named volume `db_data` | SQLite written to the container working directory |
+| Redis is local (Alpine image) | Redis is Upstash (external, TLS) |
+
+### Architecture on Render
+
+```
+┌────────────────────────────────────────────────┐
+│              Render container                   │
+│                                                 │
+│   uvicorn (main process)                        │
+│   ├── FastAPI app — serves HTTP on $PORT        │
+│   ├── APScheduler thread                        │
+│   │   ├── purge job (hourly)                   │
+│   │   └── inline worker (every 3 s)            │
+│   │       polls DB for pending tasks,          │
+│   │       runs handler, marks completed        │
+│   └── worker daemon thread                     │
+│       BRPOP loop → Upstash Redis (TLS)         │
+│       processes tasks from queue               │
+│                                                 │
+│   SQLite: tasks.db  (ephemeral, in-memory FS)  │
+└──────────────────┬─────────────────────────────┘
+                   │  rediss://
+             ┌─────▼──────┐
+             │   Upstash   │
+             │    Redis    │
+             └────────────┘
+```
+
+The inline worker polls every 3 seconds as a fallback — tasks are processed even when the Redis BRPOP worker has connectivity issues. With Redis healthy, the BRPOP thread picks up tasks first (sub-second latency); the inline poller skips tasks already in `processing` state.
+
+### Deploy your own instance
+
+1. Fork this repository
+2. Create a new **Web Service** on Render → connect the repo → select `Dockerfile.railway`
+3. Set environment variables (or let `render.yaml` set them):
+   - `REDIS_URL` — Upstash Redis URL (`rediss://...`) — create a free instance at [upstash.com](https://upstash.com)
+   - `DATABASE_URL` — `sqlite:///tasks.db` (default, no change needed)
+4. Deploy
 
 ---
 
