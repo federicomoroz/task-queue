@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+
+# ── builder stage ──────────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+
+# ── runtime stage ──────────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy application source (app + worker share the same codebase)
+COPY app/ app/
+COPY worker/ worker/
+
+CMD ["python", "-m", "worker.main"]
