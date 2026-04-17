@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
-    database_url: str = "sqlite:////data/tasks.db"
+    database_url: str = "sqlite:///tasks.db"
     worker_queues: str = "default,high,low"
     brpop_timeout: int = 5
     purge_completed_after_hours: int = 24
