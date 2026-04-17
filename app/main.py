@@ -1,4 +1,5 @@
 import logging
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -21,6 +22,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+_worker_stop = threading.Event()
+
 
 def _purge_old_tasks() -> None:
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
@@ -35,6 +38,15 @@ def _purge_old_tasks() -> None:
         session.close()
 
 
+def _run_worker() -> None:
+    """Run worker loop in a background daemon thread."""
+    try:
+        from worker.main import run
+        run(_worker_stop)
+    except Exception as exc:
+        logger.error("Worker thread crashed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
@@ -47,11 +59,18 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_purge_old_tasks, "interval", hours=1)
     scheduler.start()
 
-    logger.info("task-queue API started on port 8004")
+    # Start worker in a background daemon thread so it shares this process
+    _worker_stop.clear()
+    worker_thread = threading.Thread(target=_run_worker, daemon=True, name="worker")
+    worker_thread.start()
+    logger.info("task-queue started (API + worker in same process)")
+
     yield
 
+    _worker_stop.set()
+    worker_thread.join(timeout=10)
     scheduler.shutdown(wait=False)
-    logger.info("task-queue API shutting down")
+    logger.info("task-queue shutting down")
 
 
 app = FastAPI(

@@ -98,7 +98,15 @@ def process_task(
             )
 
 
-def run() -> None:
+def run(stop_event=None) -> None:
+    """
+    Main worker loop.
+    stop_event: optional threading.Event; when set, the loop exits cleanly.
+    """
+    import threading
+    if stop_event is None:
+        stop_event = threading.Event()
+
     create_tables()
 
     event_manager = EventManager()
@@ -110,8 +118,13 @@ def run() -> None:
     logger.info("Worker started. Listening on queues: %s", queue_names)
 
     try:
-        while True:
-            result = queue_service.pop(queue_names, timeout=settings.brpop_timeout)
+        while not stop_event.is_set():
+            try:
+                result = queue_service.pop(queue_names, timeout=settings.brpop_timeout)
+            except Exception as exc:
+                logger.warning("Redis pop error (will retry): %s", exc)
+                stop_event.wait(timeout=5)
+                continue
             if result is None:
                 continue
 

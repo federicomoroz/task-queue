@@ -1,20 +1,16 @@
-# Single-container deploy for Render/Railway: runs API + worker together.
-# The multi-container architecture is preserved for local dev via docker-compose.yml.
+# Single-container deploy for Render: API + worker run in same process (worker as daemon thread)
+# Local multi-container dev: use docker-compose.yml
 
 FROM python:3.12-slim
 
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 COPY app/ app/
 COPY worker/ worker/
-COPY start.sh .
-RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 EXPOSE 8004
 
-CMD ["./start.sh"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8004"]
