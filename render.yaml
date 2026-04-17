@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: task-queue
+    runtime: docker
+    dockerfilePath: ./Dockerfile.railway
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////tmp/tasks.db
+      - key: WORKER_QUEUES
+        value: default,high,low
+      - key: BRPOP_TIMEOUT
+        value: "5"
+      - key: REDIS_URL
+        sync: false
+    plan: free
+    healthCheckPath: /health
