@@ -42,7 +42,11 @@ class EnqueueStep:
             payload=json.dumps(payload),
             max_retries=max_retries,
         )
-        self._queue_service.push(queue, task.id)
+        try:
+            self._queue_service.push(queue, task.id)
+        except Exception as exc:
+            logger.warning("Redis unavailable, task %d stays pending: %s", task.id, exc)
+            return task
         self._event_manager.emit(
             events.TASK_ENQUEUED,
             task_id=task.id,

@@ -10,6 +10,11 @@ router = APIRouter(prefix="/queues", tags=["queues"])
 @router.get("", response_model=list[QueueOut])
 def list_queues():
     service = RedisQueueService()
-    return [
-        QueueOut(name=q, depth=service.depth(q)) for q in settings.queue_names
-    ]
+    result = []
+    for q in settings.queue_names:
+        try:
+            depth = service.depth(q)
+        except Exception:
+            depth = 0
+        result.append(QueueOut(name=q, depth=depth))
+    return result
