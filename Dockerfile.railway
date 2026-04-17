@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+# Single-container deploy for Railway: runs API + worker together.
+# The multi-container architecture is preserved for local dev via docker-compose.yml.
+
+# ── builder stage ──────────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+
+# ── runtime stage ──────────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy application source
+COPY app/ app/
+COPY worker/ worker/
+COPY start.sh .
+RUN chmod +x start.sh
+
+# Railway injects $PORT at runtime; default 8004 for local use
+EXPOSE 8004
+
+CMD ["./start.sh"]
