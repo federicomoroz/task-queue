@@ -11,6 +11,6 @@ services:
       - key: BRPOP_TIMEOUT
         value: "5"
       - key: REDIS_URL
-        sync: false
+        value: rediss://default:gQAAAAAAAWCZAAIncDEzZTM3OGQxYjkzMGE0MjI3Yjg1ZWI0OTNmMTBmODcxYXAxOTAyNjU@bold-oyster-90265.upstash.io:6379
     plan: free
     healthCheckPath: /health
