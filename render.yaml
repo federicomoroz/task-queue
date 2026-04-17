@@ -14,3 +14,4 @@ services:
         sync: false
     plan: free
     healthCheckPath: /health
+    healthCheckTimeout: 180
