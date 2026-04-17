@@ -13,4 +13,5 @@ COPY worker/ worker/
 
 EXPOSE 8004
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8004"]
+# Use shell form so ${PORT} is expanded at runtime (Render injects PORT)
+CMD python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8004}
