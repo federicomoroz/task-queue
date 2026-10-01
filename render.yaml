@@ -7,7 +7,7 @@ services:
       - key: DATABASE_URL
         value: sqlite:////tmp/tasks.db
       - key: WORKER_QUEUES
-        value: default,high,low
+        value: high,default,low
       - key: BRPOP_TIMEOUT
         value: "5"
       - key: REDIS_URL

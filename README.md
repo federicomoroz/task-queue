@@ -812,7 +812,7 @@ tq:queue:low        Redis List — same
 
 `LPUSH` pushes to the left (head); `BRPOP` pops from the right (tail). This gives **FIFO** order within each queue.
 
-Worker processes pop from `["default", "high", "low"]` in that order — Redis checks lists left to right, so the first non-empty list wins. To implement priority, route important tasks to `high` and they will be picked up before `default` tasks.
+Worker processes pop from `["high", "default", "low"]` in that order — Redis checks lists left to right, so the first non-empty list wins. Tasks routed to `high` are picked up before `default` ones, and `low` only when both are empty. The order comes from `WORKER_QUEUES`.
 
 ---
 
@@ -838,7 +838,7 @@ Worker processes pop from `["default", "high", "low"]` in that order — Redis c
                        (shared SQLite)
 ```
 
-Each worker runs `BRPOP` on the same list. Redis delivers each task ID to exactly one worker — there is no double-processing. Workers write to SQLite independently; SQLite's WAL mode handles concurrent writes from multiple processes.
+Each worker runs `BRPOP` on the same list. Redis delivers each task ID to exactly one worker — there is no double-processing. Every worker writes its status updates to the same SQLite file.
 
 ---
 
@@ -941,7 +941,7 @@ All values are read from environment variables (or a `.env` file).
 |----------|---------|-------------|
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `DATABASE_URL` | `sqlite:///tasks.db` | SQLAlchemy database URL (relative to working directory) |
-| `WORKER_QUEUES` | `default,high,low` | Comma-separated list of queues workers listen on |
+| `WORKER_QUEUES` | `high,default,low` | Comma-separated list of queues workers listen on |
 | `BRPOP_TIMEOUT` | `5` | Seconds a worker blocks waiting for a task |
 | `PURGE_COMPLETED_AFTER_HOURS` | `24` | Completed tasks older than this are deleted by the background scheduler |
 

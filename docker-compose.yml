@@ -23,7 +23,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=sqlite:////data/tasks.db
-      - WORKER_QUEUES=default,high,low
+      - WORKER_QUEUES=high,default,low
       - PURGE_COMPLETED_AFTER_HOURS=24
     volumes:
       - db_data:/data
@@ -47,7 +47,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=sqlite:////data/tasks.db
-      - WORKER_QUEUES=default,high,low
+      - WORKER_QUEUES=high,default,low
       - BRPOP_TIMEOUT=5
     volumes:
       - db_data:/data
